@@ -30,8 +30,6 @@ chmod +x archiver.py
 python3 archiver.py
 ```
 	
-## Features
-
     Compress Folder
         Click "Compress Folder".
         Select a folder to compress.
