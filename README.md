@@ -1,6 +1,8 @@
 # Folder Compressor & Archive Inspector
 
 A PyQt5-based GUI application for compressing folders, inspecting archive contents, and decompressing archives.
+
+
 ![Image](https://github.com/user-attachments/assets/e05d1dab-dd8d-41e0-8f43-630318882f4a)
 
 ## Features
