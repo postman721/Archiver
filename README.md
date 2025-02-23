@@ -33,7 +33,7 @@ python3 archiver.py
     Compress Folder
         Click "Compress Folder".
         Select a folder to compress.
-        Choose a compression format (.zip, .tar, .tar.gz, etc.).
+        Choose a compression format.
         The archive will be created at the chosen destination.
 
     View Archive Contents
