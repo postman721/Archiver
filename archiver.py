@@ -12,7 +12,10 @@ from PyQt5.QtWidgets import (
     QFileDialog,
     QMessageBox,
     QDialog,
-    QTextEdit
+    QTextEdit,
+    QTreeView,
+    QFileSystemModel,
+    QHBoxLayout
 )
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import QDir
@@ -101,6 +104,55 @@ def maybe_add_extension(out_path: str, selected_filter: str) -> str:
 
 
 ##########################
+# CUSTOM SELECTION DIALOG
+##########################
+
+class CustomSelectionDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Files and Folders to Compress")
+        self.resize(600, 400)
+        layout = QVBoxLayout(self)
+
+        # Use a QTreeView with a QFileSystemModel to display the file system.
+        self.tree = QTreeView(self)
+        self.tree.setSelectionMode(QTreeView.ExtendedSelection)
+        self.model = QFileSystemModel(self)
+        self.model.setRootPath(QDir.homePath())
+        self.tree.setModel(self.model)
+        self.tree.setRootIndex(self.model.index(QDir.homePath()))
+        # Optionally hide extra columns (size, type, date modified)
+        self.tree.setColumnWidth(0, 250)
+        self.tree.hideColumn(1)
+        self.tree.hideColumn(2)
+        self.tree.hideColumn(3)
+
+        layout.addWidget(self.tree)
+
+        # Ok and Cancel buttons
+        button_layout = QHBoxLayout()
+        self.ok_button = QPushButton("OK")
+        self.cancel_button = QPushButton("Cancel")
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(self.ok_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+
+    def selected_paths(self):
+        """
+        Returns a list of selected file and folder paths.
+        """
+        indexes = self.tree.selectionModel().selectedIndexes()
+        paths = set()
+        for index in indexes:
+            # Only consider the first column to avoid duplicates
+            if index.column() == 0:
+                paths.add(self.model.filePath(index))
+        return list(paths)
+
+
+##########################
 # MAIN WIDGET / APP LOGIC
 ##########################
 
@@ -115,8 +167,8 @@ class ArchiveHandler(QWidget):
 
         layout = QVBoxLayout()
 
-        # 1) Compress Folder Button
-        self.compress_folder_button = QPushButton("Compress Folder")
+        # 1) Compress Folder Button (now using custom selection dialog)
+        self.compress_folder_button = QPushButton("Compress Files/Folders")
         self.compress_folder_button.clicked.connect(self.compress_folder)
 
         # 2) View Archive Button (inspect archive contents)
@@ -139,15 +191,15 @@ class ArchiveHandler(QWidget):
         self.setLayout(layout)
 
     ########################
-    # 1) COMPRESS A FOLDER
+    # 1) COMPRESS SELECTED ITEMS
     ########################
     def compress_folder(self):
         """
-        Prompts user to select a single folder, then picks archive format from a dropdown,
-        and compresses that folder (including hidden files) with os.walk.
+        Opens a custom dialog that allows the user to select one or more files and/or folders.
+        Then prompts for an archive name and compresses the selected items.
         """
-        folder_path = self._open_file_dialog_for_folder()
-        if not folder_path:
+        selected_items = self._open_custom_selection_dialog()
+        if not selected_items:
             return
 
         file_filter = (
@@ -161,7 +213,7 @@ class ArchiveHandler(QWidget):
         )
         out_path, selected_filter = QFileDialog.getSaveFileName(
             self,
-            caption="Save compressed folder as",
+            caption="Save compressed file as",
             filter=file_filter
         )
         if not out_path:
@@ -173,56 +225,63 @@ class ArchiveHandler(QWidget):
         if not self._check_supported_extension(out_path):
             return
 
-        # Decide .zip vs tar-based
         if out_path.lower().endswith(".zip"):
-            self._compress_zip_folder(folder_path, out_path)
+            self._compress_zip_items(selected_items, out_path)
         else:
-            self._compress_tar_folder(folder_path, out_path)
+            self._compress_tar_items(selected_items, out_path)
 
-    def _open_file_dialog_for_folder(self):
+    def _open_custom_selection_dialog(self):
         """
-        Allows picking one folder (including hidden). We'll use os.walk on it.
+        Opens the custom dialog to select files and folders.
         """
-        dialog = QFileDialog(
-            self,
-            "Select folder to compress",
-            QDir.homePath()
-        )
-        dialog.setFileMode(QFileDialog.Directory)
-        dialog.setFilter(QDir.AllDirs | QDir.Hidden | QDir.NoDotAndDotDot)
-        dialog.setOption(QFileDialog.ShowDirsOnly, True)
-        dialog.setOptions(QFileDialog.DontUseNativeDialog)
-
+        dialog = CustomSelectionDialog(self)
         if dialog.exec_() == QDialog.Accepted:
-            return dialog.selectedFiles()[0]
-        return ""
+            return dialog.selected_paths()
+        return []
 
-    def _compress_zip_folder(self, folder_path, out_path):
-        """Recursively compress a folder into a ZIP."""
+    def _compress_zip_items(self, selected_items, out_path):
+        """
+        Compress the selected files/folders into a ZIP archive.
+        """
+        try:
+            # Compute a common base for relative paths.
+            common_base = os.path.commonpath(selected_items)
+        except ValueError:
+            # Fallback: if items are on different drives (Windows), use empty base.
+            common_base = ""
         try:
             with zipfile.ZipFile(out_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for root, dirs, files in os.walk(folder_path):
-                    for file_name in files:
-                        full_path = os.path.join(root, file_name)
-                        rel_path = os.path.relpath(full_path, start=folder_path)
-                        zf.write(full_path, arcname=rel_path)
-            self.status_label.setText(
-                f"Compressed folder '{folder_path}' into '{out_path}'"
-            )
+                for item in selected_items:
+                    if os.path.isfile(item):
+                        arcname = os.path.relpath(item, common_base) if common_base else os.path.basename(item)
+                        zf.write(item, arcname=arcname)
+                    elif os.path.isdir(item):
+                        for root, dirs, files in os.walk(item):
+                            for file_name in files:
+                                full_path = os.path.join(root, file_name)
+                                arcname = os.path.relpath(full_path, common_base) if common_base else os.path.basename(full_path)
+                                zf.write(full_path, arcname=arcname)
+            self.status_label.setText(f"Compressed selected items into '{out_path}'")
         except Exception as e:
-            self.status_label.setText(f"Error compressing folder to ZIP: {e}")
+            self.status_label.setText(f"Error compressing selected items to ZIP: {e}")
 
-    def _compress_tar_folder(self, folder_path, out_path):
-        """Recursively compress a folder into a TAR-based archive."""
+    def _compress_tar_items(self, selected_items, out_path):
+        """
+        Compress the selected files/folders into a TAR-based archive.
+        """
         mode = determine_tar_mode_compress(out_path)
         try:
+            common_base = os.path.commonpath(selected_items)
+        except ValueError:
+            common_base = ""
+        try:
             with tarfile.open(out_path, mode=mode) as tar:
-                tar.add(folder_path, arcname=os.path.basename(folder_path))
-            self.status_label.setText(
-                f"Compressed folder '{folder_path}' into '{out_path}'"
-            )
+                for item in selected_items:
+                    arcname = os.path.relpath(item, common_base) if common_base else os.path.basename(item)
+                    tar.add(item, arcname=arcname)
+            self.status_label.setText(f"Compressed selected items into '{out_path}'")
         except Exception as e:
-            self.status_label.setText(f"Error compressing folder to TAR: {e}")
+            self.status_label.setText(f"Error compressing selected items to TAR: {e}")
 
     ########################
     # 2) VIEW ARCHIVE CONTENTS
@@ -236,7 +295,6 @@ class ArchiveHandler(QWidget):
         if not archive_path:
             return
 
-        # Decide if it's .zip or tar, then read the member list
         try:
             contents_list = self._inspect_archive(archive_path)
             self._show_contents_dialog(archive_path, contents_list)
@@ -273,7 +331,6 @@ class ArchiveHandler(QWidget):
 
         layout = QVBoxLayout()
 
-        # A read-only text field to show the list
         text_edit = QTextEdit()
         text_edit.setReadOnly(True)
         text_edit.setPlainText(text)
