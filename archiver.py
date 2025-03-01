@@ -163,7 +163,7 @@ class ArchiveHandler(QWidget):
 
     def init_ui(self):
         """Set up the main window, layout, and widgets."""
-        self.setWindowTitle("Folder Compressor & Archive Inspector")
+        self.setWindowTitle("Compressor & Archive Inspector")
 
         layout = QVBoxLayout()
 
